@@ -50,6 +50,7 @@ services:
         mode: host
     command:
       - "start-data-node"
+      - "--accesslog"
       - "--peeraddresses=${TRAEFIKEE_PEER_ADDRESSES}"
       - "--traefikeelog.traefik=${TRAEFIKEE_LOG_LEVEL}"
       - "--swarmmode"

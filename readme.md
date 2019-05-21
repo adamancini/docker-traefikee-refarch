@@ -230,7 +230,7 @@ traefikeectl connect --swarm --clustername=traefikee-ingress
 
 export TRAEFIKEE_PEER_ADDRESSES=traefikee-ingress_control-node:4242
 docker stack deploy -c data-node-global.yml traefikee-ingress
-
+docker stack deploy -c control-node.yml traefikee-ingress
 
 traefikeectl list-nodes --clustername=traefikee-ingress
 traefikeectl deploy --clustername=traefikee-ingress \
