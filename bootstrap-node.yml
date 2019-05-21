@@ -1,0 +1,42 @@
+---
+version: '3.6'
+
+networks:
+  traefikee-net:
+    name: ${TRAEFIKEE_SWARM_NETWORK}
+    external: true
+
+secrets:
+  traefikee-license:
+    external: true
+    name: ${TRAEFIKEE_LICENSE_SECRET}
+
+services:
+  bootstrap-node:
+    image: containous/traefikee:v1.0.1
+    deploy:
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints:
+          - node.role == manager
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    secrets:
+      - traefikee-license
+    networks:
+      - traefikee-net
+    command:
+      - "bootstrap"
+      - "--swarmmode"
+      - "--swarmmode.network=${TRAEFIKEE_SWARM_NETWORK}"
+      - "--swarmmode.licensesecret=traefikee-license"
+      - "--traefikeelog.traefik=${TRAEFIKEE_LOG_LEVEL}"
+      - "--clustername=${TRAEFIKEE_CLUSTER_NAME}"
+      - "--api"
+      - "--timeout=600"
+      - "--controlNodes=${TRAEFIKEE_EXPECTED_CONTROL_NODES}"
+      # For now, we don't allow this value to be customized in swarm.
+      # - "--traefikeectlapi.address=${TRAEFIKEE_CTL_API_ADDRESS}"
+    labels:
+      - "traefikee=bootstrap-node"

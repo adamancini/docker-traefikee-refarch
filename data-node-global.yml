@@ -1,0 +1,58 @@
+---
+version: "3.7"
+
+networks:
+  traefikee-net:
+    name: ${TRAEFIKEE_SWARM_NETWORK}
+    external: true
+
+secrets:
+  traefikee-data-node-join-token:
+    name: ${TRAEFIKEE_DATA_NODE_JOIN_TOKEN}
+    external: true
+
+services:
+  data-node:
+    image: containous/traefikee:v1.0.1
+    deploy:
+      mode: global
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 5
+        window: 30s
+      rollback_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: continue
+        order: stop-first
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        order: stop-first
+      placement:
+        constraints:
+          - node.labels.nodetype == loadbalancer
+          - node.role != manager
+    secrets:
+      - traefikee-data-node-join-token
+    networks:
+      - traefikee-net
+    ports:
+      - target: 80
+        published: ${TRAEFIKEE_HTTP_PORT}
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: ${TRAEFIKEE_HTTPS_PORT}
+        protocol: tcp
+        mode: host
+    command:
+      - "start-data-node"
+      - "--peeraddresses=${TRAEFIKEE_PEER_ADDRESSES}"
+      - "--traefikeelog.traefik=${TRAEFIKEE_LOG_LEVEL}"
+      - "--swarmmode"
+      - "--swarmmode.jointokensecret=traefikee-data-node-join-token"
+    labels:
+      - "traefikee=data-node"

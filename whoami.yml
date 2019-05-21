@@ -1,0 +1,31 @@
+version: '3.7'
+networks:
+  traefikee-ingress:
+    external: true
+
+services:
+  whoami:
+    image: containous/whoami
+    deploy:
+      mode: replicated
+      replicas: 2
+      labels:
+        - "traefik.enable=true"
+        - "traefik.frontend.rule=Host:whoami.app.traefik.aws.annarchy.net"
+        - "traefik.backend=whoami"
+        - "traefik.port=80"
+    networks:
+     - traefikee-ingress
+  whoami2:
+    image: containous/whoami
+    deploy:
+      mode: replicated
+      replicas: 2
+      labels:
+        - "traefik.weight=10"
+        - "traefik.enable=true"
+        - "traefik.backend=whoami"
+        - "traefik.frontend.rule=Host:whoami.app.traefik.aws.annarchy.net"
+        - "traefik.port=80"
+    networks:
+     - traefikee-ingress

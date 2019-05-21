@@ -1,0 +1,62 @@
+---
+version: '3.7'
+
+networks:
+  traefikee-net:
+    name: ${TRAEFIKEE_SWARM_NETWORK}
+    external: true
+
+secrets:
+  traefikee-control-node-join-token:
+    external: true
+    name: ${TRAEFIKEE_CONTROL_NODE_JOIN_TOKEN}
+
+services:
+  control-node:
+    image: containous/traefikee:v1.0.1
+    deploy:
+      mode: replicated
+      replicas: ${TRAEFIKEE_CONTROL_NODE_REPLICAS_COUNT}
+      labels:
+        - "traefik.docker.network=traefikee-control"
+        - "traefik.enable=true"
+        - "traefik.basic.frontend.rule=Host:dashboard.app.traefik.aws.annarchy.net"
+        - "traefik.frontend.auth.basic=${TRAEFIKEE_DASHBOARD_PASSWORD}"
+        - "traefik.basic.port=8080"
+        - "traefik.basic.protocol=http"
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 30s
+      update_config:
+        parallelism: 1
+        delay: 180s
+        failure_action: rollback
+        max_failure_ratio: .25
+        order: start-first
+      rollback_config:
+        parallelism: 0
+        order: start-first
+      placement:
+        constraints:
+          - node.role == manager
+    stop_grace_period: 60s
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    secrets:
+      - traefikee-control-node-join-token
+    networks:
+      - traefikee-net
+    ports:
+      - ${TRAEFIKEE_DASHBOARD_PORT:-8080}:8080
+      - ${TRAEFIKEE_CTLAPI_PORT:-55055}:55055
+    command:
+      - "start-control-node"
+      - "--peeraddresses=${TRAEFIKEE_PEER_ADDRESSES}"
+      - "--traefikeelog.traefik=${TRAEFIKEE_LOG_LEVEL}"
+      - "--swarmmode"
+      - "--swarmmode.network=${TRAEFIKEE_SWARM_NETWORK}"
+      - "--swarmmode.jointokensecret=traefikee-control-node-join-token"
+    labels:
+      - "traefikee=control-node"
