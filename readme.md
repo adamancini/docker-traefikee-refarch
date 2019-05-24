@@ -134,7 +134,7 @@ services:
 docker network create --driver=overlay <^>traefikee-control<^^>
 ```
 
-##### Create `bootstrap-node` service
+##### Create the `bootstrap-node` service
 
 Edit bootstrap-node.yml, and set the name of the control plane network
 ```
@@ -166,7 +166,7 @@ Under the `command:` key, replace the rest of the variable prompts with appropri
       - "--controlNodes=<^>3<^^>"
 ```
 
-Alternatively, wherever there is a ${VARIABLE} in a compose file, you may export those variables in your shell and "docker stack deploy" will use those values instead
+Alternatively, wherever there is a `${VARIABLE}` in a compose file, you may export those variables in your shell and "docker stack deploy" will use those values instead
 ```
 export TRAEFIKEE_LICENSE_SECRET=<^>traefikee-license<^^>
 export TRAEFIKEE_SWARM_NETWORK=<^>traefikee-control<^^>
@@ -223,7 +223,7 @@ docker service ps <^>traefikee-swarm<^^>_bootstrap-node
 docker service logs -f <^>traefikee-swarm<^^>_bootstrap_node
 ```
 
-##### Create `control-node` service
+##### Create the `control-node` service
 
 Edit `control-node.yaml` and set compose API version to '`3.7`'
 ```
@@ -261,9 +261,10 @@ secrets:
 
 Continue editing `control-node.yaml` and add `update_config`, `rollback_config`, and `restart_policy` parameters
 
-    Note:  these timers should be generous to ensure that when the control plane is updated with "docker service update", we do not shut down more than 1 control node at a time in order to maintain a quorum.  The given settings provide about ~90s of delay in between task restarts to allow for the control plane to converge.  These timers may be adjusted for your environment.
+> Note:  these timers should be generous to ensure that when the control plane is updated with "docker service update", we do not shut down more than 1 control node at a time in order to maintain a quorum.  The given settings provide about ~90s of delay in between task restarts to allow for the control plane to converge.  These timers may be adjusted for your environment.
 
-```
+
+```yaml
 services:
   control-node:
     image: containous/traefikee:v1.0.1
@@ -292,14 +293,14 @@ services:
 ```
 
 Then, configure the Traefik EE dashboard and `traefikeectl` API ports, if desired.  These will default to `8080` and `55055`, respectively.
-```
+```yaml
     ports:
       - ${TRAEFIKEE_DASHBOARD_PORT:-8080}:8080
       - ${TRAEFIKEE_CTLAPI_PORT:-55055}:55055
 ```
 
 Then, configure the `command:` key and replace the `${TRAEFIKEE_LOG_LEVEL}` and `${TRAEFIKEE_SWARM_NETWORK}` variables
-```
+```yaml
     command:
       ...
       - "--traefikeelog.traefik=<^>info<^^>"
@@ -309,13 +310,13 @@ Then, configure the `command:` key and replace the `${TRAEFIKEE_LOG_LEVEL}` and 
 ```
 
 Finally, replace the `${TRAEFIKEE_PEER_ADDRESSES}` variable with the address of our `bootstrap-node` service:
-```
+```yaml
     command:
       - "--peeraddresses=<^>traefikee-swarm<^^>_bootstrap-node:4242"
 ```
 
 And save the file.  The complete `control-node.yaml` file should look similar to the following:
-```
+```yaml
 ---
 version: '3.7'
 
@@ -373,32 +374,30 @@ services:
       - "traefikee=control-node"
 ```
 
-
-
-
 ###### If you wish to configure Traefik to proxy the Traefik EE dashboard
 
 Generate a username & password combination to authenticate against the dashboard, using the `htpasswd` utility (or similar) for HTTP Simple Auth.
 We need to tell the YAML parser to escape each '`$`' in our resulting password string with a `$` character (replacing `$` with `$$`) to use it directly in docker-compose.yml file:
 
-```
+```sh
 read -sp 'Traefik EE Dashboard Password: ' TRAEFIKEE_DASHBOARD_PASSWORD
 echo $(htpasswd -nbB <^>user<^^> "${TRAEFIKEE_DASHBOARD_PASSWORD}") | sed -e s/\\$/\\$\\$/g
 
 > <^>user<^^>:$$apr1$$ryHGa8yK$$5lRELezhgkUtJxiJ.XTfZ.
 ```
 
-> This is not necessary if the value is exported to your shell:
-```
-read -sp 'Traefik EE Dashboard Password: ' TRAEFIKEE_DASHBOARD_PASSWORD
-export TRAEFIKEE_DASHBOARD_PASSWORD=$(htpasswd -nbB <^>user<^^> "${TRAEFIKEE_DASHBOARD_PASSWORD}")
-```
+- This is not necessary if the value is exported to your shell:
+    ```sh
+    read -sp 'Traefik EE Dashboard Password: ' TRAEFIKEE_DASHBOARD_PASSWORD
+    export TRAEFIKEE_DASHBOARD_PASSWORD=$(htpasswd -nbB <^>user<^^> "${TRAEFIKEE_DASHBOARD_PASSWORD}")
+    ```
 
 > More advanced authentication methods can be configured using Traefik's `frontend.auth` labels.  See[authentication](https://docs.traefik.io/configuration/api/#authentication) for more details.
 
 Add the following deployment labels to your control-node.yml file.
 > Note the documentation on the correct placement of the [deploy](https://docs.docker.com/compose/compose-file/#deploy) key
-```
+
+```yaml
     deploy:
       mode: replicated
       replicas: <^>3<^^>
@@ -411,20 +410,27 @@ Add the following deployment labels to your control-node.yml file.
         - "traefik.basic.protocol=http"
 ```
 
-
+Deploy the `control-node` service and validate
+```sh
+docker stack deploy -c control-node.yml <^>traefikee-swarm<^^>
+docker service ps <^>traefikee-swarm<^^>_control-node
+docker service logs -f <^>traefikee-swarm<^^>_control-node
 ```
 
-### Configuration
+#### Create the `data-node` service
 
-When the installation is complete:
+```
+```
 
-- Check your cluster nodes and logs using `traefikeectl`:
+#### Configure Traefik EE entrypoint
 
-    ```shell
-    traefikeectl list-nodes --clustername=traefikee-swarm
-    traefikeectl logs --clustername=traefikee-swarm
-    ...
-    ```
+When the installation is complete, check your cluster nodes and logs using `traefikeectl`:
+
+```sh
+traefikeectl list-nodes --clustername=traefikee-swarm
+traefikeectl logs --clustername=traefikee-swarm
+...
+```
 
 - Deploy a customized [routing configuration](https://docs.containo.us/references/configs/routing/#configure-routing-in-traefikee)
   to create the [entrypoints](https://docs.traefik.io/configuration/entrypoints/).
@@ -439,35 +445,46 @@ When the installation is complete:
         --defaultentrypoints=https,http
     ```
 
-### Deploy Application
+#### Deploy Test Application
 
 You can start deploying applications in Docker Swarm with
 [labels configured](https://docs.traefik.io/configuration/backends/docker/#using-docker-with-swarm-mode):
 
-- Start by creating the following Docker YAML Compose file named `whoami-stack.yaml`,
-  with `public.cluster.dns.org` being the public DNS to reach the cluster (you can also use the IP address of a Swarm node instead of `public.cluster.dns.org`):
+- Start by creating the following Docker YAML Compose file named `whoami.yaml`, given an DNS record of `*.tr.domain.com` for our Traefik data nodes
 
-    ```yaml
-    version: '3.4'
+```yaml
+version: '3.7'
+networks:
+  traefikee-ingress:
+    external: true
 
+services:
+  whoami:
+    image: containous/whoami
+    deploy:
+      mode: replicated
+      replicas: 2
+      labels:
+        - "traefik.backend=whoami"
+        - "traefik.enable=true"
+        - "traefik.frontend.rule=Host:whoami.tr.domain.com"
+        - "traefik.port=80"
     networks:
-      traefikee_net:
-        external: true
-
-    services:
-      whoami:
-        image: containous/whoami
-        deploy:
-          mode: replicated
-          replicas: 2
-          labels:
-            - "traefik.enable=true"
-            - "traefik.frontend.rule=Host:public.cluster.dns.org"
-            - "traefik.port=80"
-            - "traefik.backend=whoami"
-        networks:
-        - traefikee_net
-    ```
+     - traefikee-ingress
+  whoami2:
+    image: containous/whoami
+    deploy:
+      mode: replicated
+      replicas: 2
+      labels:
+        - "traefik.backend=whoami"
+        - "traefik.enable=true"
+        - "traefik.frontend.rule=Host:whoami.tr.domain.com"
+        - "traefik.port=80"
+        - "traefik.weight=10"
+    networks:
+     - traefikee-ingress
+```
 
 - Deploy your application with the following command:
 
@@ -494,4 +511,4 @@ You can start deploying applications in Docker Swarm with
     ```
 
 
-
+#### Move an application from Interlock to Traefik EE
