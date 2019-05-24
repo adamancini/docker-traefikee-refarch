@@ -102,8 +102,9 @@ You can install Traefik EE in HA Mode using
 #### Install Prerequisites
 ```sh
 # obtain `traefikeectl`
-mkdir traefikee && cd traefikee
-wget https://s3.amazonaws.com/traefikee/binaries/v1.0.1/traefikeectl/traefikeectl_v1.0.1_linux_amd64.tar.gz
+mkdir traefikeectl && cd traefikeectl
+curl -sSL \
+  https://s3.amazonaws.com/traefikee/binaries/v1.0.1/traefikeectl/traefikeectl_v1.0.1_linux_amd64.tar.gz | tar xvz
 mv traefikeectl /usr/bin/.
 
 # obtain the compose files
@@ -116,7 +117,7 @@ echo -n ${TRAEFIKEE_LICENSE_KEY} | docker secret create <^>traefikee-license<^^>
 ```
 
 > Note: If you are installing TraefikEE from behind a corporate proxy, you will need to add the following environment
-variables to each deployment YAML so that TraefikEE can make its upstream license check:
+variables to each deployment YAML so that TraefikEE may navigate the proxy:
 ```yaml
 services:
   control-node: # or bootstrap-node or data-node.
@@ -244,11 +245,11 @@ Next, set the name of the Traefike EE control node join token
   You can use `docker secret ls` to discover it
 ```sh
 docker secret ls
-> ID                          NAME                                        DRIVER              CREATED              UPDATED
-> iwh6gkt7vdksecv9dg1d1ayy8   traefikee-swarm-control-node-join-token                       About a minute ago   About a minute ago
-> ktpk6p88nf31ldo8byrtnobg5   traefikee-swarm-data-node-join-token                          About a minute ago   About a minute ago
-> ld6mvz4lh1ox0u7iofqjiwdl1   traefikee-license                                               7 minutes ago        7 minutes ago
-> i550mhwctoryyyeujttx0bwr9   ucp-auth-key                                                    4 days ago           4 days ago
+# ID                          NAME                                        DRIVER              CREATED              UPDATED
+# iwh6gkt7vdksecv9dg1d1ayy8   traefikee-swarm-control-node-join-token                       About a minute ago   About a minute ago
+# ktpk6p88nf31ldo8byrtnobg5   traefikee-swarm-data-node-join-token                          About a minute ago   About a minute ago
+# ld6mvz4lh1ox0u7iofqjiwdl1   traefikee-license                                               7 minutes ago        7 minutes ago
+# i550mhwctoryyyeujttx0bwr9   ucp-auth-key                                                    4 days ago           4 days ago
 ```
 In our case, <^>traefikee-swarm<^^>-control-node-join-token
 
@@ -516,7 +517,7 @@ services:
           - node.role != manager
 ```
 
-Lastly, set the `${TRAEFIKEE_PEER_ADDRESSES}` parameter to the address of the `control-node` service on the control plane, now that bootstrapping is complete.
+Finally, set the `${TRAEFIKEE_PEER_ADDRESSES}` parameter to the address of the `control-node` service on the control plane, now that bootstrapping is complete
 ```yaml
 command:
       - "start-data-node"
@@ -573,65 +574,117 @@ services:
       - traefikee-data-node-join-token
     networks:
       - traefikee-net
+      - traefikee-ingress
     ports:
       - target: 80
-        published: ${TRAEFIKEE_HTTP_PORT}
+        published: 9080
         protocol: tcp
         mode: host
       - target: 443
-        published: ${TRAEFIKEE_HTTPS_PORT}
+        published: 9443
         protocol: tcp
         mode: host
     command:
       - "start-data-node"
-      - "--accesslog"
-      - "--peeraddresses=${TRAEFIKEE_PEER_ADDRESSES}"
-      - "--traefikeelog.traefik=${TRAEFIKEE_LOG_LEVEL}"
+      - "--peeraddresses=traefikee-swarm_control-node:4242"
+      - "--traefikeelog.traefik=info"
       - "--swarmmode"
       - "--swarmmode.jointokensecret=traefikee-data-node-join-token"
     labels:
       - "traefikee=data-node"
 ```
 
-
-#### Configure `traefikeectl` for authentication
-
-#### Validate installation
-When the installation is complete, check your cluster nodes and logs using `traefikeectl` and `docker`:
-
+Deploy the `data-node` service
 ```sh
-docker stack ls traefikee-swarm
-docker service logs traefikee-swarm_control-node
-docker service logs traefikee-swarm_data-node
-
-traefikeectl list-nodes --clustername=traefikee-swarm
-traefikeectl logs --clustername=traefikee-swarm
+docker stack deploy -c data-node-global.yml <^>traefikee-swarm<^^>
 ```
 
+#### Configure `traefikeectl` to administrate the Traefik EE cluster
 
-#### Configure Traefik EE entrypoint
+We will use `traefikeectl` to authenticate against the Traefik EE cluster for the first time and download our credentials files.  This will only happen once, and can never be retrieved again without reinstalling the cluster.  Be sure to perform this step from a safe environment, preferably one of the manager nodes; and back up the generated credentials files to a secure archive.
 
+> Credentials files will be generated in `$HOME/.config/traefikee/<cluster-name>`
 
+```sh
+traefikeectl connect --swarm --clustername=<^>traefikee-swarm<^^>
+# Connecting to Docker API...ok
+# Connecting to TraefikEE Control API...ok
+# Connecting to Docker Swarm API...ok
+# Retrieving TraefikEE Control credentials...ok
+# Removing cluster credentials from platform...ok
+#   > Credentials saved in "/home/ada/.config/traefikee/traefikee-ingress", please make sure to keep them safe as they can never be retrieved again.
+# ✔ Successfuly gained access to the cluster. You can now use other traefikeectl commands.
+```
 
-Deploy a customized [routing configuration](https://docs.containo.us/references/configs/routing/#configure-routing-in-traefikee)
-  to create the [entrypoints](https://docs.traefik.io/configuration/entrypoints/).
-  Please note that Traefik EE uses the `80` and `443` port internally,
-  hence these values for the entrypoints:
+#### Post-installation
 
-    ```sh
-    traefikeectl deploy --clustername=traefikee-swarm \
-        --docker.swarmmode \
-        --entryPoints='Name:http Address::80' \
-        --entryPoints='Name:https Address::443 TLS' \
-        --defaultentrypoints=https,http
-    ```
+##### Validate installation
+When the installation is complete, check your cluster nodes and logs using `traefikeectl` and `docker`:
+```sh
+traefikeectl list-nodes --clustername=traefikee-ingress
+# Name          Availability  Role          Leader
+# ----          ------------  ----          ------
+# 372e3ae6062f  ACTIVE        CONTROL NODE
+# 7494a4e862a1  ACTIVE        DATA NODE
+# 59d4c9b90428  ACTIVE        CONTROL NODE  YES
+# 1e963e846a8f  ACTIVE        DATA NODE
+# 5d85db5d2158  ACTIVE        CONTROL NODE
+```
+This step may be performed at any time after deploying the `control-node` service
+
+##### Reconfigure `control-node` to remove bootstrapper
+The final step in installing the control plane is to reconfigure the `control-node` service to remove the `bootstrap-node` service.
+
+Edit `control-node.yml` once more, and change the `--peeraddresses` parameter
+```yaml
+    command:
+      - "--peeraddresses=<^>traefikee-swarm<^^>_bootstrap-node:4242"
+```
+
+to read
+
+```yaml
+    command:
+      - "--peeraddresses=<^>traefikee-swarm<^^>_control-node:4242"
+```
+
+Save `control-node.yml`.
+
+Deploy `control-node.yml` again, and observe that the control node is stable during a reconfiguration
+```sh
+docker stack deploy -c control-node.yml <^>traefikee-swarm<^^>
+# docker service logs -f <^>traefikee-swarm<^^>_control-node
+# watch docker service ps <^>traefikee-swarm<^^>_control-node
+```
+
+Remove the `bootstrap-node` service
+```sh
+docker service rm <^>traefikee-swarm<^^>_bootstrap-node
+```
+
+This step may be performed any time after deploying the `control-node` service, to observe the effect of a reconfiguration on a real environment.
+
+##### Deploy an initial entrypoint
+
+Deploy a customized [routing configuration](https://docs.containo.us/references/configs/routing/#configure-routing-in-traefikee) to create [entrypoints](https://docs.traefik.io/configuration/entrypoints/).
+> Note that Traefik EE uses the `80` and `443` port internally, hence these values for the entrypoints:
+
+```sh
+traefikeectl deploy --clustername=traefikee-swarm \
+    --docker.swarmmode \
+    --entryPoints='Name:http Address::80' \
+    --entryPoints='Name:https Address::443 TLS' \
+    --defaultentrypoints=https,http
+```
+
+If you have configured Traefik EE to proxy the Traefike EE dashboard using labels in `control-node.yml`, you should now be able to see the Traefik EE dashboard.
 
 #### Deploy Test Application
 
 You can start deploying applications in Docker Swarm with
-[labels configured](https://docs.traefik.io/configuration/backends/docker/#using-docker-with-swarm-mode):
+[labels](https://docs.traefik.io/configuration/backends/docker/#using-docker-with-swarm-mode) on your Swarm services:
 
-- Start by creating the following Docker YAML Compose file named `whoami.yaml`, given an DNS record of `*.tr.domain.com` for our Traefik data nodes
+Start by creating the following Compose file named `whoami.yaml`
 
 ```yaml
 version: '3.7'
@@ -648,7 +701,7 @@ services:
       labels:
         - "traefik.backend=whoami"
         - "traefik.enable=true"
-        - "traefik.frontend.rule=Host:whoami.tr.domain.com"
+        - "traefik.frontend.rule=Host:<^>whoami.tr.domain.com<^^>"
         - "traefik.port=80"
     networks:
      - traefikee-ingress
@@ -660,37 +713,36 @@ services:
       labels:
         - "traefik.backend=whoami"
         - "traefik.enable=true"
-        - "traefik.frontend.rule=Host:whoami.tr.domain.com"
+        - "traefik.frontend.rule=Host:<^>whoami.tr.domain.com<^^>"
         - "traefik.port=80"
         - "traefik.weight=10"
     networks:
      - traefikee-ingress
 ```
 
-- Deploy your application with the following command:
+Deploy your application with the following command:
 
-    ```sh
-    docker stack deploy --compose-file=./whoami-stack.yaml whoami
-    ```
+```sh
+docker stack deploy -c whoami.yml whoami
+```
 
-- Check the application deployment status, with `2/2` replicas ready:
+Verify that the requests are routed by TraefikEE to the "whoami" application
 
-    ```sh
-    docker stack ps whoami
-    ```
+```sh
+curl http://whoami.tr.domain.com
+```
 
-- Verify that the requests are routed by TraefikEE to the "whoami" application:
+If you wish to bypass name resolution and force `curl` to use a local IP and port to test Traefik EE, given a load balancer node hosting a Traefik EE data node with an IP of `10.0.0.10`
+```sh
+curl --header "Host: whoami.tr.domain.com" http://10.0.0.10:9080
+curl --resolve whoami.tr.domain.com:9080:10.0.0.10 http://whoami.tr.domain.com:9080
+```
 
-    ```sh
-    curl http://public.cluster.dns.org:9080
-    ```
+Cleanup the `whoami` application
 
-- Cleanup the "whoami" application if everything is alright:
-
-    ```sh
-    docker stack rm whoami
-    ```
-
+```sh
+docker stack rm whoami
+```
 
 #### Move an application from Interlock to Traefik EE
 
