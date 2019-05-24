@@ -239,3 +239,10 @@ traefikeectl deploy --clustername=traefikee-ingress \
     --entryPoints='Name:https Address::443 TLS' \
     --defaultentrypoints=https,http
 ```
+
+#### todo
+
+- migration from Interlock to Traefik
+  - service update add traefik labels
+  - validate both Ingresses route to application
+  - service update remove interlock labels
