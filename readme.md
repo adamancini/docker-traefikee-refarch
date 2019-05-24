@@ -223,7 +223,7 @@ docker service ps <^>traefikee-swarm<^^>_bootstrap-node
 docker service logs -f <^>traefikee-swarm<^^>_bootstrap_node
 ```
 
-##### Create the `control-node` service
+#### Create the `control-node` service
 
 Edit `control-node.yaml` and set compose API version to '`3.7`'
 ```yaml
@@ -240,7 +240,8 @@ networks:
 
 Next, set the name of the Traefike EE control node join token
 
-> The name of the secret will be cluster-name-control-node-join token.  You can use `docker secret ls` to discover it
+> The name of the secret will be "<cluster-name>-control-node-join-token".
+  You can use `docker secret ls` to discover it
 ```sh
 docker secret ls
 > ID                          NAME                                        DRIVER              CREATED              UPDATED
@@ -374,7 +375,7 @@ services:
       - "traefikee=control-node"
 ```
 
-###### If you wish to configure Traefik to proxy the Traefik EE dashboard
+##### If you wish to configure Traefik to proxy the Traefik EE dashboard
 
 Generate a username & password combination to authenticate against the dashboard, using the `htpasswd` utility (or similar) for HTTP Simple Auth.
 We need to tell the YAML parser to escape each '`$`' in our resulting password string with a `$` character (replacing `$` with `$$`) to use it directly in docker-compose.yml file:
@@ -416,13 +417,184 @@ docker stack deploy -c control-node.yml <^>traefikee-swarm<^^>
 docker service ps <^>traefikee-swarm<^^>_control-node
 docker service logs -f <^>traefikee-swarm<^^>_control-node
 ```
+#### Deploy Traefik EE Data Nodes
 
-#### Create the `data-node` service
-
-Edit the
+##### Create an ingress network for Traefik EE data nodes
+```sh
+docker network create --driver=overlay <^>traefikee-ingress<^^>
 ```
 
+##### Create the `data-node` service
+
+Edit the `data-node-global.yml` file and set the compose API version to `3.7`
+```yaml
+version: '3.7'
 ```
+
+Replace the `${TRAEFIKEE_SWARM_NETWORK}` and `${TRAEFIKEE_DATA_NODE_JOIN_TOKEN}` variables as we did with `control-node.yml`.
+```yaml
+---
+version: "3.7"
+
+networks:
+  traefikee-net:
+    name: <^>traefikee-control<^^>
+    external: true
+
+secrets:
+  traefikee-data-node-join-token:
+    name: traefikee-swarm-data-node-join-token
+    external: true
+```
+
+Add the definition for the global `traefikee-ingress` network that we will use to proxy our workloads
+```yaml
+networks:
+  traefikee-net:
+    name: <^>traefikee-control<^^>
+    external: true
+  traefikee-ingress:
+    name: <^>traefikee-ingress<^^>
+    external: true
+
+```
+
+Continue editing `data-node-global.yml` and add the scheduling constraint that will deploy the Traefik EE data node on our dedicated load balancer nodes
+```yaml
+services:
+  data-node:
+    image: containous/traefikee:v1.0.1
+    deploy:
+      mode: global
+      placement:
+        constraints:
+          - node.labels.nodetype == loadbalancer
+          - node.role != manager
+```
+
+Next, modify the `ports:` section and set the Traefik EE data node ports to use Host-mode publishing
+```yaml
+    ports:
+      - target: 80
+        published: <^>9080<^^>
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: <^>9443<^^>
+        protocol: tcp
+        mode: host
+```
+
+Then, add `update_config`, `rollback_config`, and `restart_policy` paramters, similar to the `control-node` service
+> Note that since we are using host-mode publishing, we *must* use the `stop-first` update order or else our service
+  will be unable to restart due a scheduling conflict.
+
+```yaml
+services:
+  data-node:
+    image: containous/traefikee:v1.0.1
+    deploy:
+      mode: global
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+        window: 30s
+      rollback_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: continue
+        order: stop-first
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        order: stop-first
+      placement:
+        constraints:
+          - node.labels.nodetype == loadbalancer
+          - node.role != manager
+```
+
+Lastly, set the `${TRAEFIKEE_PEER_ADDRESSES}` parameter to the address of the `control-node` service on the control plane, now that bootstrapping is complete.
+```yaml
+command:
+      - "start-data-node"
+      - "--accesslog"
+      - "--peeraddresses=<^>traefikee-swarm_control-node:4242<^^>"
+      - "--traefikeelog.traefik=info"
+      - "--swarmmode"
+      - "--swarmmode.jointokensecret=traefikee-data-node-join-token"
+```
+
+Save the file.  Completed, it should look similar to the following:
+```yaml
+---
+version: "3.7"
+
+networks:
+  traefikee-net:
+    name: traefikee-control
+    external: true
+  traefikee-ingress:
+    name: traefik-ingress
+    external: true
+
+secrets:
+  traefikee-data-node-join-token:
+    name: traefikee-swarm-data-node-join-token
+    external: true
+
+services:
+  data-node:
+    image: containous/traefikee:v1.0.1
+    deploy:
+      mode: global
+      restart_policy:
+        condition: any
+        delay: 5s
+        max_attempts: 5
+        window: 30s
+      rollback_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: continue
+        order: stop-first
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+        order: stop-first
+      placement:
+        constraints:
+          - node.labels.nodetype == loadbalancer
+          - node.role != manager
+    secrets:
+      - traefikee-data-node-join-token
+    networks:
+      - traefikee-net
+    ports:
+      - target: 80
+        published: ${TRAEFIKEE_HTTP_PORT}
+        protocol: tcp
+        mode: host
+      - target: 443
+        published: ${TRAEFIKEE_HTTPS_PORT}
+        protocol: tcp
+        mode: host
+    command:
+      - "start-data-node"
+      - "--accesslog"
+      - "--peeraddresses=${TRAEFIKEE_PEER_ADDRESSES}"
+      - "--traefikeelog.traefik=${TRAEFIKEE_LOG_LEVEL}"
+      - "--swarmmode"
+      - "--swarmmode.jointokensecret=traefikee-data-node-join-token"
+    labels:
+      - "traefikee=data-node"
+```
+
+
+#### Configure `traefikeectl` for authentication
 
 #### Validate installation
 When the installation is complete, check your cluster nodes and logs using `traefikeectl` and `docker`:
@@ -438,6 +610,7 @@ traefikeectl logs --clustername=traefikee-swarm
 
 
 #### Configure Traefik EE entrypoint
+
 
 
 Deploy a customized [routing configuration](https://docs.containo.us/references/configs/routing/#configure-routing-in-traefikee)
