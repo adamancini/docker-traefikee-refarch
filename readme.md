@@ -905,3 +905,33 @@ Update the `traefikee-swarm` stack with this change.
 ```sh
 docker stack deploy -c data-node-global.yml traefikee-swarm
 ```
+
+Validate that the Traefik EE data nodes route to this service
+```sh
+curl -s -H "Host: demo.local" http://10.0.0.11:9080/ping
+# {"instance":"c2f1afe673d4","version":"0.1",request_id":"..."}
+```
+
+Now, drain the service from Interlock by removing the Interlock labels
+```yaml
+# vim demo.yml
+services:
+  demo:
+    image: ehazlett/docker-demo
+    networks:
+      - demo
+    deploy:
+      replicas: 2
+      labels:
+        traefik.backend: demo
+        traefik.docker.network: traefikdemo_demo
+        traefik.enable: true
+        traefik.frontend.rule: Host:demo.local
+        traefik.port: 8080
+        # ...
+```
+
+Save the file and deploy the changes
+```sh
+docker stack deploy -c demo.yml traefikdemo
+```
