@@ -1,9 +1,8 @@
 ---
-title: Traefik Enterprise Edition Production Best Practices Solution Brief for Docker Enterprise and Swarm
+title: Traefik Enterprise Edition Production Best Practices Reference Architecture for Docker Enterprise Edition
 summary: This Solution Brief documents how to deploy a Highly-Available Traefik =EE ingress solution for Docker Swarm
-type: guide
+type: refarch
 author: adamancini
-campaign: docker-certified-infrastructure
 product:
 - ee
 testedon:
@@ -18,7 +17,6 @@ testedon:
 platform:
 - linux
 tags:
-- solution-brief
 - security
 - networking
 - swarm
