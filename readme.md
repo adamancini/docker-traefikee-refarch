@@ -56,6 +56,8 @@ This guide assumes you are familiar with the basic architecture of Traefik outli
 
 This guide often refers to Traefik EE "control" and "data" nodes.  There are various ways of deploying the components of Traefik EE and the number of containers may not necessarily be equal to the number of nodes that Traefik is deployed on.  For the purposes of this guide a Traefik control node or Traefik data node refers to a single Traefik EE container deployed in a given cluster or the collective Traefik EE containers, not the underlying Docker EE infrastructure.
 
+We also use the term "workload" to mean any services deployed on your UCP worker nodes that are not UCP platform-related or specifically related to Traefik EE.
+
 ## Ingress Planning Requirements
 
 ### Name Resolution
@@ -746,4 +748,163 @@ docker stack rm whoami
 
 #### Move an application from Interlock to Traefik EE
 
-#### Configure SSL Termination
+Since configuring Traefik and Interlock to route your workloads is based on adding & removing `labels`, it should be possible to move a service to Traefik with 0 downtime.
+
+Assuming that you are moving from a deployment outlined in our [Layer 7 Routing for Production](https://docs.docker.com/ee/ucp/interlock/deploy/production/) guidelines, we can make several assumptions about the cluster:
+
+- We expect Interlock to be routing on 2 dedicated load balancer nodes; given `10.0.0.10` and `10.0.0.11`
+- We expect Interlock to be listening in host-mode on ports `:8080` and `:8443` on our load balancer nodes
+- We expect Interlock to discover the `docker network` that our service is attached to, and the `ucp-interlock-proxy` service joins that network automatically
+
+- We expect Traefik EE to be routing on 2 dedicated load balancer nodes; also given `10.0.0.10` and `10.0.0.11`
+- We expect Traefik EE to be listening in host-mode on ports `:9080` and `:9443` on our load balancer nodes
+- We do *not* expect Traefik to automatically join our service's network.
+
+Note: When this guide was written, Traefik EE 1.0.1 does not do automatic network discovery.  The Traefik EE `data-node` service must be attached manually to any network that it must act as a proxy for.  For this reason, the user may do either:
+
+- use a pre-determined, well-known network name that will be used by workloads for ingress
+- manually update the `data-node` service after deploying services on new workload networks
+
+Both methods may be utilized.
+
+##### Use a pre-determined, well-known network name
+
+In this fashion, we have settled on `traefik-ingress` as a well-known network name to use for our services that will consume Traefik EE as a proxy.
+
+Given the following simple swarm service, deployed on Interlock
+```sh
+docker service create \
+  --name demo \
+  --network demo \
+  --label com.docker.lb.hosts=demo.local \
+  --label com.docker.lb.network=demo \
+  --label com.docker.lb.port=8080 \
+ehazlett/docker-demo
+# 6r0wiglf5f3bdpcy6zesh1pzx
+
+curl -s -H "Host: demo.local" http://10.0.0.11:8080/ping
+# {"instance":"c2f1afe673d4","version":"0.1",request_id":"7bcec438af14f8875ffc3deab9215bc5"}
+```
+
+In order to route requests to this service using Traefik EE, we must first add it to the `traefikee-ingress` proxy network
+```sh
+docker service update \
+  --network-add traefikee-ingress \
+demo
+```
+
+Then, add [Traefik]() labels to the service
+```sh
+docker service update \
+  --label-add "traefik.backend=demo" \
+  --label-add "traefik.docker.network=traefik-ingress" \
+  --label-add "traefik.enable=true" \
+  --label-add "traefik.frontend.rule=Host:<^>demo.local<^^>" \
+  --label-add "traefik.port=8080" \
+demo
+# 6r0wiglf5f3bdpcy6zesh1pzx
+
+curl -s -H "Host: demo.local" http://10.0.0.11:9080/ping
+# {"instance":"c2f1afe673d4","version":"0.1",request_id":"..."}
+```
+
+If successful, the service may be drained from Interlock
+```sh
+docker service update \
+  --network-rm demo \
+  --label-rm com.docker.lb.hosts \
+  --label-rm com.docker.lb.network \
+  --label-rm com.docker.lb.port \
+demo
+# 6r0wiglf5f3bdpcy6zesh1pzx
+```
+
+##### Update Traefik EE to join stack networks
+
+In this fashion, we have decided to update the Traefik EE `data-node` service whenever we need it to route to a new workload network.
+
+Given the following simple swarm service deployed with Interlock
+```yaml
+# demo.yml
+version: '3.7'
+services:
+  demo:
+    image: ehazlett/docker-demo
+    networks:
+      - demo
+    deploy:
+      replicas: 2
+      labels:
+        com.docker.lb.hosts: demo.local
+        com.docker.lb.port: 8080
+        com.docker.lb.network: demo
+```
+```sh
+docker stack deploy -c demo.yml traefikdemo
+# creating service traefikdemo_demo
+# creating network traefikdemo_demo
+
+curl -s -H "Host: demo.local" http://10.0.0.11:8080/ping
+# {"instance":"c2f1afe673d4","version":"0.1",request_id":"7bcec438af14f8875ffc3deab9215bc5"}
+```
+
+Add [Traefik]() labels the workload's compose file
+```yaml
+# demo.yml
+version: '3.7'
+services:
+  demo:
+    image: ehazlett/docker-demo
+    networks:
+      - demo
+    deploy:
+      replicas: 2
+      labels:
+        com.docker.lb.hosts: demo.local
+        com.docker.lb.port: 8080
+        com.docker.lb.network: demo
+        traefik.backend: demo
+        traefik.docker.network: traefikdemo_demo
+        traefik.enable: true
+        traefik.frontend.rule: Host:demo.local
+        traefik.port: 8080
+        # ...
+```
+
+Save the compose file and deploy the changes.
+```sh
+docker stack deploy -c demo.yml traefikdemo
+```
+
+We know from `docker service inspect traefikee-swarm_data-node` and our deployment process that the `data-node` service is only attached to `traefikee-control` and `traefikee-ingress`.
+
+Update the `data-node-global.yml` file and add the new network attachment to `traefikdemo_demo`
+```yaml
+---
+version: "3.7"
+
+networks:
+  traefikee-net:
+    name: ${TRAEFIKEE_SWARM_NETWORK}
+    external: true
+  traefikee-ingress:
+    name: traefik-ingress
+    external: true
+  traefikdemo_demo:
+    name: traefikdemo_demo
+    external: true
+
+services:
+  data-node:
+    # ...
+    networks:
+      - traefikee-net
+      - traefikee-ingress
+      - traefikdemo_demo
+    # ...
+```
+
+Update the `traefikee-swarm` stack with this change.
+```sh
+docker stack deploy -c data-node-global.yml traefikee-swarm
+```
