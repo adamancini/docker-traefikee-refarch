@@ -5,7 +5,9 @@ networks:
   traefikee-net:
     name: ${TRAEFIKEE_SWARM_NETWORK}
     external: true
-
+  traefikee-ingress:
+    name: traefik-ingress
+    external: true
 secrets:
   traefikee-data-node-join-token:
     name: ${TRAEFIKEE_DATA_NODE_JOIN_TOKEN}
@@ -50,7 +52,6 @@ services:
         mode: host
     command:
       - "start-data-node"
-      - "--accesslog"
       - "--peeraddresses=${TRAEFIKEE_PEER_ADDRESSES}"
       - "--traefikeelog.traefik=${TRAEFIKEE_LOG_LEVEL}"
       - "--swarmmode"
