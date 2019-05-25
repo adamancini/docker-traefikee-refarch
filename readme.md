@@ -823,9 +823,9 @@ demo
 
 In this fashion, we have decided to update the Traefik EE `data-node` service whenever we need it to route to a new workload network.
 
-Given the following simple swarm service deployed with Interlock
+Given the following simple swarm service `demo.yml` deployed with Interlock
 ```yaml
-# demo.yml
+---
 version: '3.7'
 services:
   demo:
@@ -850,8 +850,7 @@ curl -s -H "Host: demo.local" http://10.0.0.11:8080/ping
 
 Add [Traefik]() labels the workload's compose file
 ```yaml
-# demo.yml
-version: '3.7'
+# vim demo.yml
 services:
   demo:
     image: ehazlett/docker-demo
